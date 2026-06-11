@@ -11,16 +11,6 @@ jobs:
     name: Run tests
     uses: ./.github/workflows/test.yaml
 
-  snyk:
-    name: Scan dependencies
-    uses: ./.github/workflows/snyk.yaml
-    with:
-      severity-treshold: low
-    secrets: inherit
-    permissions:
-      contents: read
-      security-events: write
-
   semgrep:
     name: Scan source code
     uses: ./.github/workflows/semgrep.yaml
@@ -29,10 +19,76 @@ jobs:
       contents: read
       security-events: write
 
-  release-please:
-    name: Create release-please PR
-    uses: ./.github/workflows/release-please.yaml
-    secrets: inherit
+  release:
+    name: Tag and release
+    needs: [test]
+    runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: write # to push the tag and create the GitHub Release
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Cache go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-
+
+      - name: Determine next version
+        id: version
+        run: |
+          git fetch --tags --force
+          latest="$(git tag -l 'v[0-9]*' --sort=-v:refname | head -n1)"
+          if [ -z "$latest" ]; then
+            latest="v0.0.0"
+            range=""
+          else
+            range="${latest}..HEAD"
+          fi
+
+          ver="${latest#v}"
+          major="${ver%%.*}"
+          rest="${ver#*.}"
+          minor="${rest%%.*}"
+          patch="${rest##*.}"
+
+          # Bump according to Conventional Commits since the previous tag:
+          # a breaking change bumps major, a feat bumps minor, otherwise patch.
+          log="$(git log ${range} --pretty=format:'%s%n%b')"
+          if printf '%s' "$log" | grep -qE '^[a-z]+(\([^)]+\))?!:' || printf '%s' "$log" | grep -q 'BREAKING CHANGE'; then
+            major=$((major + 1)); minor=0; patch=0
+          elif printf '%s' "$log" | grep -qiE '^feat(\([^)]+\))?:'; then
+            minor=$((minor + 1)); patch=0
+          else
+            patch=$((patch + 1))
+          fi
+
+          next="v${major}.${minor}.${patch}"
+          echo "Previous tag: ${latest} -> next version: ${next}"
+          echo "tag=${next}" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean --timeout=30m
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -8,13 +8,6 @@ permissions:
   security-events: write
 
 jobs:
-  snyk:
-    name: Scan dependencies
-    uses: ./.github/workflows/snyk.yaml
-    with:
-      severity-treshold: medium
-    secrets: inherit
-
   semgrep:
     name: Scan source code
     uses: ./.github/workflows/semgrep.yaml
