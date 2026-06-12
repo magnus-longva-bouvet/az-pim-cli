@@ -39,6 +39,25 @@ func TestBrowserCommand(t *testing.T) {
 	}
 }
 
+func TestTokenCachePath(t *testing.T) {
+	t.Run("prefers AZURE_CONFIG_DIR when set", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("AZURE_CONFIG_DIR", dir)
+
+		assert.Equal(t, filepath.Join(dir, TOKEN_CACHE_FILE_NAME), tokenCachePath())
+	})
+
+	t.Run("falls back to the home directory", func(t *testing.T) {
+		t.Setenv("AZURE_CONFIG_DIR", "")
+
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Skipf("home directory unavailable: %v", err)
+		}
+		assert.Equal(t, filepath.Join(home, TOKEN_CACHE_FILE_NAME), tokenCachePath())
+	})
+}
+
 func TestOpenURLHonorsBrowserEnv(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test relies on a POSIX shell script")

@@ -47,7 +47,7 @@ Set up the app registration once:
 4. **Grant admin consent** for the permissions above. Granting admin consent for these *delegated* permissions requires a role such as *Cloud Application Administrator*, *Application Administrator*, *Privileged Role Administrator* or *Global Administrator*.
 5. Note the **Application (client) ID** and **Directory (tenant) ID**.
 
-On first use of a group/role command, your default browser opens for an interactive sign-in (authorization code + PKCE). The token (including the refresh token) is cached at `$HOME/.az-pim-cli.cache.json` (mode `0600`) so subsequent commands reuse it silently until it expires.
+On first use of a group/role command, your default browser opens for an interactive sign-in (authorization code + PKCE). The token (including the refresh token) is cached at `$AZURE_CONFIG_DIR/.az-pim-cli.cache.json` when `AZURE_CONFIG_DIR` is set (matching the Azure CLI convention), otherwise at `$HOME/.az-pim-cli.cache.json` (mode `0600`) so subsequent commands reuse it silently until it expires.
 
 > :information_source: The interactive sign-in honors the `BROWSER` environment variable (same convention as Python's `webbrowser`): a `os.pathsep`-separated list of commands, where `%s` is replaced with the URL (or the URL is appended if there's no `%s`). If `BROWSER` is unset, the platform default browser is used.
 

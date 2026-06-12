@@ -19,17 +19,26 @@ import (
 	"github.com/pkg/browser"
 )
 
-// Name of the token cache file (stored in the user's home directory)
+// Name of the token cache file (stored in the directory returned by configDir)
 const TOKEN_CACHE_FILE_NAME string = ".az-pim-cli.cache.json"
+
+// configDir returns the directory where az-pim-cli persists its cached
+// artifacts (e.g. the MSAL token cache). It prefers $AZURE_CONFIG_DIR when set
+// (matching the Azure CLI convention), falls back to the user's home directory,
+// and finally to the current working directory.
+func configDir() string {
+	if dir := os.Getenv("AZURE_CONFIG_DIR"); dir != "" {
+		return dir
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return home
+	}
+	return "."
+}
 
 // tokenCachePath returns the path used to persist the MSAL token cache.
 func tokenCachePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		// Fall back to the current working directory if the home dir is unavailable
-		return TOKEN_CACHE_FILE_NAME
-	}
-	return filepath.Join(home, TOKEN_CACHE_FILE_NAME)
+	return filepath.Join(configDir(), TOKEN_CACHE_FILE_NAME)
 }
 
 // fileTokenCache is a pure-Go implementation of cache.ExportReplace that
@@ -60,6 +69,11 @@ func (c *fileTokenCache) Export(ctx context.Context, cacheData cache.Marshaler, 
 	data, err := cacheData.Marshal()
 	if err != nil {
 		return err
+	}
+	if dir := filepath.Dir(c.path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
 	}
 	return os.WriteFile(c.path, data, 0o600)
 }
