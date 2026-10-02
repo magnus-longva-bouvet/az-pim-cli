@@ -7,9 +7,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,9 +92,9 @@ func TestBlobDeleteCheck(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, http.MethodDelete, r.Method)
-				assert.True(t, strings.HasPrefix(r.URL.Path, "/pim-wait-"), "path %q", r.URL.Path)
+				assert.Regexp(t, probeNamePattern, strings.TrimPrefix(r.URL.Path, "/"))
 				assert.Equal(t, "container", r.URL.Query().Get("restype"))
-				assert.NotEmpty(t, r.Header.Get("x-ms-lease-id"), "the lease id guards a container that happens to exist")
+				assert.Regexp(t, uuidV4Pattern, r.Header.Get("x-ms-lease-id"), "the lease id guards a container that happens to exist")
 				assert.NotEmpty(t, r.Header.Get("x-ms-version"))
 				assert.NotEmpty(t, r.Header.Get("x-ms-date"))
 				assert.Equal(t, "Bearer token for "+storageScope, r.Header.Get("Authorization"))
@@ -128,7 +130,9 @@ func TestKeyVaultDeleteCheck(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, http.MethodDelete, r.Method)
-				assert.True(t, strings.HasPrefix(r.URL.Path, "/"+tt.collection+"/pim-wait-"), "path %q", r.URL.Path)
+				collection, name, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
+				assert.Equal(t, tt.collection, collection)
+				assert.Regexp(t, probeNamePattern, name)
 				assert.Equal(t, "7.4", r.URL.Query().Get("api-version"))
 				assert.Equal(t, "Bearer token for "+vaultScope, r.Header.Get("Authorization"))
 				w.WriteHeader(tt.status)
@@ -139,6 +143,65 @@ func TestKeyVaultDeleteCheck(t *testing.T) {
 
 			assert.Equal(t, tt.want, check.Run(context.Background(), fakeTokens).Outcome)
 		})
+	}
+}
+
+var uuidV4Pattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
+func TestProbeName(t *testing.T) {
+	name, err := probeName()
+	require.NoError(t, err)
+	assert.Regexp(t, probeNamePattern, name)
+
+	other, err := probeName()
+	require.NoError(t, err)
+	assert.NotEqual(t, name, other)
+}
+
+func TestCheckedProbeNameRefusesAnythingButPrefixAndRandomUUID(t *testing.T) {
+	for _, name := range []string{
+		"",
+		"pim-wait-",
+		"pim-wait-not-a-uuid",
+		"pim-wait-00000000-0000-0000-0000-000000000000",
+		"pim-wait-6ba7b810-9dad-11d1-80b4-00c04fd430c8",  // version 1
+		"pim-wait-0F8FAD5B-D9CB-469F-A165-70867728950E",  // upper case
+		"pim-wait-0f8fad5b-d9cb-469f-a165-70867728950e/", // trailing path
+		"pim-wait-0f8fad5b-d9cb-469f-a165-70867728950e?x",
+		"x/pim-wait-0f8fad5b-d9cb-469f-a165-70867728950e",
+		"0f8fad5b-d9cb-469f-a165-70867728950e",
+	} {
+		_, err := checkedProbeName(name)
+		assert.Error(t, err, "%q", name)
+	}
+	name, err := checkedProbeName("pim-wait-0f8fad5b-d9cb-469f-a165-70867728950e")
+	require.NoError(t, err)
+	assert.Equal(t, "pim-wait-0f8fad5b-d9cb-469f-a165-70867728950e", name)
+}
+
+type brokenRandomness struct{}
+
+func (brokenRandomness) Read([]byte) (int, error) { return 0, errors.New("no entropy") }
+
+// Not parallel: uuid.SetRand swaps the package's source of randomness for the
+// whole process.
+func TestDeleteChecksSendNothingWithoutARandomUUID(t *testing.T) {
+	uuid.SetRand(brokenRandomness{})
+	t.Cleanup(func() { uuid.SetRand(nil) })
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("sent %s %s without a random UUID", r.Method, r.URL)
+	}))
+	defer server.Close()
+
+	for _, check := range []Check{
+		blobDeleteCheck{endpoint: server.URL, client: server.Client()},
+		keyVaultDeleteCheck{vaultURL: server.URL, collection: "keys", notFound: "KeyNotFound", client: server.Client()},
+		keyVaultDeleteCheck{vaultURL: server.URL, collection: "certificates", notFound: "CertificateNotFound", client: server.Client()},
+	} {
+		result := check.Run(context.Background(), fakeTokens)
+		assert.Equal(t, Unknown, result.Outcome)
+		assert.Contains(t, result.Detail, "refusing to probe")
 	}
 }
 
@@ -245,6 +308,17 @@ func TestBuildChecks(t *testing.T) {
 			"Key Vault: delete certificates in gitops-kv",
 			"kubectl: the group in 'kubectl auth whoami'",
 		}, names)
+	})
+
+	t.Run("a name Azure would not allow gets no data-plane check", func(t *testing.T) {
+		var names []string
+		for _, check := range BuildChecks(group, []Assignment{
+			{Scope: rg + "/Microsoft.Storage/storageAccounts/evil.example#", RoleName: "Storage Blob Data Owner", Grant: blobDataOwner},
+			{Scope: rg + "/Microsoft.KeyVault/vaults/kv?x=1", RoleName: "Key Vault Administrator", Grant: vaultAdmin},
+		}, opts) {
+			names = append(names, check.Name())
+		}
+		assert.NotContains(t, strings.Join(names, "\n"), "delete")
 	})
 
 	t.Run("the endpoints come from the scopes", func(t *testing.T) {

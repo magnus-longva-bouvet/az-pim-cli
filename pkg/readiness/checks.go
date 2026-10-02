@@ -39,9 +39,12 @@ const (
 	certificateDelete = "Microsoft.KeyVault/vaults/certificates/delete"
 )
 
+// The captured names become the host of a DELETE, so they are held to Azure's
+// naming rules for storage accounts and vaults; a scope naming anything else
+// gets no data-plane check.
 var (
-	storageAccountScope = regexp.MustCompile(`(?i)^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.Storage/storageAccounts/([^/]+)$`)
-	keyVaultScope       = regexp.MustCompile(`(?i)^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.KeyVault/vaults/([^/]+)$`)
+	storageAccountScope = regexp.MustCompile(`(?i)^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.Storage/storageAccounts/([a-z0-9]{3,24})$`)
+	keyVaultScope       = regexp.MustCompile(`(?i)^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.KeyVault/vaults/([a-z][a-z0-9-]{1,22}[a-z0-9])$`)
 )
 
 // Options says where the checks send their requests.
@@ -125,11 +128,40 @@ func BuildChecks(groupID string, assignments []Assignment, opts Options) []Check
 	return checks
 }
 
+// probeNamePattern is the only shape a name the DELETE checks address may
+// have: the prefix and a random (version 4) UUID, in lower case.
+var probeNamePattern = regexp.MustCompile(`^pim-wait-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
+// randomUUID returns a fresh version 4 UUID, or an error when the system's
+// randomness fails or the result is not one, so that a DELETE is never sent
+// with anything else.
+func randomUUID() (string, error) {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return "", fmt.Errorf("no random UUID: %w", err)
+	}
+	if id.Version() != 4 || id.Variant() != uuid.RFC4122 {
+		return "", fmt.Errorf("not a random UUID: %s", id)
+	}
+	return id.String(), nil
+}
+
 // probeName returns a name no real container, key or certificate has. The
 // DELETE checks address it, so a check can only ever be refused or told that
-// nothing by that name exists.
-func probeName() string {
-	return "pim-wait-" + uuid.NewString()
+// nothing by that name exists. It errs rather than return any other name.
+func probeName() (string, error) {
+	id, err := randomUUID()
+	if err != nil {
+		return "", fmt.Errorf("refusing to probe: %w", err)
+	}
+	return checkedProbeName("pim-wait-" + id)
+}
+
+func checkedProbeName(name string) (string, error) {
+	if !probeNamePattern.MatchString(name) {
+		return "", fmt.Errorf("refusing to probe: %q is not pim-wait-<random UUID>", name)
+	}
+	return name, nil
 }
 
 type armPermissionsCheck struct {
@@ -188,11 +220,19 @@ func (c blobDeleteCheck) Run(ctx context.Context, tokens TokenSource) Result {
 	if err != nil {
 		return unknown("no Storage token: %v", err)
 	}
+	name, err := probeName()
+	if err != nil {
+		return unknown("%v", err)
+	}
+	leaseID, err := randomUUID()
+	if err != nil {
+		return unknown("refusing to probe without a random lease id: %v", err)
+	}
 	header := http.Header{}
 	header.Set("x-ms-version", "2023-11-03")
 	header.Set("x-ms-date", time.Now().UTC().Format(http.TimeFormat))
-	header.Set("x-ms-lease-id", uuid.NewString())
-	resp, err := send(ctx, c.client, http.MethodDelete, c.endpoint+"/"+probeName()+"?restype=container", token, header, nil)
+	header.Set("x-ms-lease-id", leaseID)
+	resp, err := send(ctx, c.client, http.MethodDelete, c.endpoint+"/"+name+"?restype=container", token, header, nil)
 	if err != nil {
 		return unknown("%v", err)
 	}
@@ -227,7 +267,11 @@ func (c keyVaultDeleteCheck) Run(ctx context.Context, tokens TokenSource) Result
 	if err != nil {
 		return unknown("no Key Vault token: %v", err)
 	}
-	resp, err := send(ctx, c.client, http.MethodDelete, c.vaultURL+"/"+c.collection+"/"+probeName()+"?api-version=7.4", token, nil, nil)
+	name, err := probeName()
+	if err != nil {
+		return unknown("%v", err)
+	}
+	resp, err := send(ctx, c.client, http.MethodDelete, c.vaultURL+"/"+c.collection+"/"+name+"?api-version=7.4", token, nil, nil)
 	if err != nil {
 		return unknown("%v", err)
 	}
