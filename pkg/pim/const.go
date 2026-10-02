@@ -55,6 +55,9 @@ const (
 	// PIM for Entra (directory) roles
 	GRAPH_ROLE_ELIGIBILITY_PATH = "roleManagement/directory/roleEligibilityScheduleInstances"
 	GRAPH_ROLE_REQUEST_PATH     = "roleManagement/directory/roleAssignmentScheduleRequests"
+	// Role assignments that are live right now. '--wait' reads it so that an
+	// active role is checked rather than requested again, which Graph refuses.
+	GRAPH_ROLE_ASSIGNMENT_PATH = "roleManagement/directory/roleAssignmentScheduleInstances"
 )
 
 // Microsoft Graph PIM request action and expiration type

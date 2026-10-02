@@ -220,11 +220,12 @@ time=2024-11-20T08:08:20.129+01:00 level=INFO msg="Request completed" group=my-e
 
 </details>
 
-#### Wait until a group works
-> Return only once this shell can use the activated group
+#### Wait until a group or role works
+> Return only once this shell can use the activated group or Entra role
 
 ```bash
 $ az-pim-cli activate group --name my-entra-id-group --wait
+$ az-pim-cli activate role --name "User Administrator" --wait
 ```
 
 <details>
@@ -237,9 +238,11 @@ An activation takes effect within seconds, but the access tokens the Azure CLI h
 - the group's object id in `kubectl auth whoami`, when the current kube context signs in through az;
 - the group membership in Microsoft Graph, when none of the above applies.
 
-It returns once every check has passed twice in a row, and exits with code 4 when that has not happened within `--wait-timeout` (default `3m`). A check that never gets an answer, typically because of a firewall, is reported rather than waited for. A group that is already active is only checked, not requested again.
+For an Entra role, the check is that the Microsoft Graph token `az` now hands out lists the role in its `wids` claim. Tokens list only built-in roles held tenant-wide, so for a custom role, or one scoped to an administrative unit, `--wait` only refreshes the tokens.
 
-`--wait` works for groups only, needs `az` signed in as the same account as az-pim-cli, uses the endpoints of the global cloud, and has been tested on Linux only.
+It returns once every check has passed twice in a row, and exits with code 4 when that has not happened within `--wait-timeout` (default `3m`). A check that never gets an answer, typically because of a firewall, is reported rather than waited for. A group or role that is already active is only checked, not requested again, and with `--extend` the group is checked after the extension.
+
+`--wait` covers groups and Entra roles, not Azure resource roles. It needs `az` signed in as the same account as az-pim-cli, uses the endpoints of the global cloud, and has been tested on Linux only.
 
 </details>
 

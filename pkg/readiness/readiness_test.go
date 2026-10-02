@@ -108,6 +108,16 @@ func TestWaitHoldsForACheckThatAnsweredAndThenWentQuiet(t *testing.T) {
 	assert.Empty(t, report.Unverified)
 }
 
+func TestWaitWithNothingToCheckRefreshesOnce(t *testing.T) {
+	waiter, refreshes := newTestWaiter()
+
+	report, err := waiter.Wait(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, *refreshes)
+	assert.Zero(t, report.Elapsed, "nothing to check means nothing to wait for")
+}
+
 func TestWaitStopsWhenTheRefreshFails(t *testing.T) {
 	check := &scriptedCheck{name: "a", outcomes: []Outcome{Pass}}
 	waiter, _ := newTestWaiter(check)

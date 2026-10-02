@@ -171,6 +171,27 @@ func TestGetEligibleRoleAssignments(t *testing.T) {
 	}
 }
 
+func (m *mockClient) GetActiveRoleAssignments(principalId string, token string) *GraphRoleAssignmentResponse {
+	args := m.Called(principalId, token)
+	return args.Get(0).(*GraphRoleAssignmentResponse)
+}
+
+func TestGetActiveRoleAssignments(t *testing.T) {
+	m := newMockClient()
+
+	m.On("GetActiveRoleAssignments", TEST_DUMMY_PRINCIPAL_ID, TEST_DUMMY_JWT).Return(ActiveRoleAssignmentsDummyData)
+
+	activeRoleAssignments := GetActiveRoleAssignments(TEST_DUMMY_PRINCIPAL_ID, TEST_DUMMY_JWT, m)
+
+	if len(activeRoleAssignments.Value) != 1 {
+		t.Fatalf("expected 1 active role assignment, got %v", len(activeRoleAssignments.Value))
+	}
+	if activeRoleAssignments.Value[0].RoleDefinitionId != TEST_DUMMY_ROLE_2_DEFINITION_ID {
+		t.Errorf("expected the active role to be %s, got %s", TEST_DUMMY_ROLE_2_DEFINITION_ID, activeRoleAssignments.Value[0].RoleDefinitionId)
+	}
+	m.AssertCalled(t, "GetActiveRoleAssignments", TEST_DUMMY_PRINCIPAL_ID, TEST_DUMMY_JWT)
+}
+
 func (m *mockClient) ValidateResourceAssignmentRequest(scope string, resourceAssignmentRequest *ResourceAssignmentRequestRequest, token string) bool {
 	args := m.Called(scope, resourceAssignmentRequest, token)
 	return args.Bool(0)

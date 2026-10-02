@@ -108,7 +108,9 @@ func startDateTimeDisplay(scheduleInfo *pim.GraphScheduleInfo) string {
 //     sent nothing. selfExtend replaces the schedule outright rather than adding to
 //     it, so requesting "now + 2h" while three hours remain would *shorten* access.
 //     That is the one outcome an extend flag must never produce silently.
-func extendGroupAssignment(principalId string, token string) {
+//
+// It returns the assignment, extended or left alone, for '--wait' to check.
+func extendGroupAssignment(principalId string, token string) *pim.GraphGroupAssignmentInstance {
 	activeAssignments := pim.GetActiveGroupAssignments(principalId, token, AzureClientInstance)
 	groupAssignment := utils.FindActiveGroupAssignment(name, prefix, roleName, activeAssignments)
 	if groupAssignment == nil {
@@ -132,7 +134,7 @@ func extendGroupAssignment(principalId string, token string) {
 			"group", groupName,
 			"accessId", groupAssignment.AccessId,
 		)
-		return
+		return groupAssignment
 	}
 	currentEnd, err := time.Parse(time.RFC3339, *groupAssignment.EndDateTime)
 	if err != nil {
@@ -147,7 +149,7 @@ func extendGroupAssignment(principalId string, token string) {
 			"currentEnd", currentEnd.UTC().Format(time.RFC3339),
 			"requestedEnd", requestedEnd.Format(time.RFC3339),
 		)
-		return
+		return groupAssignment
 	}
 
 	extendRequest := pim.CreateGraphGroupExtendRequest(principalId, groupAssignment, duration, reason, ticketSystem, ticketNumber)
@@ -175,6 +177,7 @@ func extendGroupAssignment(principalId string, token string) {
 		"accessId", groupAssignment.AccessId,
 		"status", requestResponse.Status,
 	)
+	return groupAssignment
 }
 
 // nameOrPrefix reports whichever selector the user actually passed, for messages
@@ -199,11 +202,21 @@ func activateGovernanceRole(roleType string) {
 
 	token := pim.GetAccessToken(AzureClientInstance.GraphScope, AzureClientInstance)
 	principalId := pim.GetUserInfo(token).ObjectId
+	ctx := context.Background()
 
 	switch roleType {
 	case pim.ROLE_TYPE_AAD_GROUPS:
 		if extend {
-			extendGroupAssignment(principalId, token)
+			groupAssignment := extendGroupAssignment(principalId, token)
+			// Extending changes no membership, but this shell's tokens may still
+			// predate the activation being extended, maybe made in another shell.
+			if waitUntilUsable {
+				groupName := groupAssignment.GroupId
+				if groupAssignment.Group != nil {
+					groupName = groupAssignment.Group.DisplayName
+				}
+				runWait(ctx, prepareGroupWait(ctx, principalId, groupAssignment.GroupId, groupAssignment.AccessId), "group", groupName)
+			}
 			return
 		}
 		eligibleAssignments := pim.GetEligibleGroupAssignments(principalId, token, AzureClientInstance)
@@ -215,19 +228,18 @@ func activateGovernanceRole(roleType string) {
 			groupName = groupAssignment.Group.DisplayName
 		}
 
-		ctx := context.Background()
 		var waiter *readiness.Waiter
 		if waitUntilUsable {
-			waiter = prepareWait(ctx, principalId, groupAssignment)
+			waiter = prepareGroupWait(ctx, principalId, groupAssignment.GroupId, groupAssignment.AccessId)
 			// Active from an earlier activation, maybe in another shell: requesting
 			// again would only be refused, but this shell's tokens may still predate it.
-			if active := activeMembership(principalId, token, groupAssignment); active != nil {
+			if active := activeMembership(principalId, token, groupAssignment.GroupId, groupAssignment.AccessId); active != nil {
 				slog.Info("Already active; checking that this shell can use it", "group", groupName, "accessId", active.AccessId)
 				if dryRun {
 					slog.Warn("Skipping the wait due to '--dry-run'")
 					os.Exit(0)
 				}
-				runWait(ctx, waiter, groupName)
+				runWait(ctx, waiter, "group", groupName)
 				return
 			}
 		}
@@ -256,7 +268,7 @@ func activateGovernanceRole(roleType string) {
 			"status", requestResponse.Status,
 		)
 		if waiter != nil {
-			runWait(ctx, waiter, groupName)
+			runWait(ctx, waiter, "group", groupName)
 		}
 	case pim.ROLE_TYPE_ENTRA_ROLES:
 		eligibleAssignments := pim.GetEligibleRoleAssignments(principalId, token, AzureClientInstance)
@@ -267,6 +279,23 @@ func activateGovernanceRole(roleType string) {
 		if roleAssignment.RoleDefinition != nil {
 			displayName = roleAssignment.RoleDefinition.DisplayName
 		}
+
+		var waiter *readiness.Waiter
+		if waitUntilUsable {
+			waiter = prepareRoleWait(ctx, principalId, roleAssignment, displayName)
+			// As for groups: an active role would be refused if requested again, and
+			// this shell's tokens may still predate it.
+			if activeRoleAssignment(principalId, token, roleAssignment) != nil {
+				slog.Info("Already active; checking that this shell can use it", "role", displayName)
+				if dryRun {
+					slog.Warn("Skipping the wait due to '--dry-run'")
+					os.Exit(0)
+				}
+				runWait(ctx, waiter, "role", displayName)
+				return
+			}
+		}
+
 		slog.Info(
 			"Requesting activation",
 			"role", displayName,
@@ -288,6 +317,9 @@ func activateGovernanceRole(roleType string) {
 			"role", displayName,
 			"status", requestResponse.Status,
 		)
+		if waiter != nil {
+			runWait(ctx, waiter, "role", displayName)
+		}
 	}
 }
 
@@ -306,6 +338,7 @@ var activateEntraRoleCmd = &cobra.Command{
 	Aliases: []string{"rl", "role", "roles"},
 	Short:   "Sends a request to Azure PIM to activate the given Entra role",
 	Run: func(cmd *cobra.Command, args []string) {
+		checkWaitFlags()
 		activateGovernanceRole(pim.ROLE_TYPE_ENTRA_ROLES)
 	},
 }
@@ -327,8 +360,10 @@ func init() {
 	activateCmd.PersistentFlags().StringVar(&ticketSystem, "ticket-system", "", "Ticket system for the activation")
 	activateCmd.PersistentFlags().StringVarP(&ticketNumber, "ticket-number", "T", "", "Ticket number for the activation")
 	activateGroupCmd.PersistentFlags().BoolVar(&extend, "extend", false, "Extend an already-active group assignment to 'now + --duration' instead of activating. Never shortens: if more time than that is already left, nothing is requested. Exits 3 if the group is not currently active.")
-	activateGroupCmd.Flags().BoolVar(&waitUntilUsable, "wait", false, "After activating, wait until this shell can use the group: drop the Azure CLI's cached access tokens so az mints new ones, then check the group's role assignments with them, and kubectl when its context signs in through az. A group that is already active is only checked. Exits 4 if this is not confirmed within --wait-timeout. Groups only; needs az signed in as the same account.")
+	activateGroupCmd.Flags().BoolVar(&waitUntilUsable, "wait", false, "After activating or extending, wait until this shell can use the group: drop the Azure CLI's cached access tokens so az mints new ones, then check the group's role assignments with them, and kubectl when its context signs in through az. A group that is already active is only checked. Exits 4 if this is not confirmed within --wait-timeout. Needs az signed in as the same account.")
 	activateGroupCmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 3*time.Minute, "How long '--wait' keeps checking before it gives up")
+	activateEntraRoleCmd.Flags().BoolVar(&waitUntilUsable, "wait", false, "After activating, wait until this shell can use the role: drop the Azure CLI's cached access tokens so az mints new ones, then check that az's new Microsoft Graph token carries the role. A role that is already active is only checked. Exits 4 if this is not confirmed within --wait-timeout. Needs az signed in as the same account.")
+	activateEntraRoleCmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 3*time.Minute, "How long '--wait' keeps checking before it gives up")
 	activateCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Display the resource that would be activated, without requesting the activation")
 	activateCmd.PersistentFlags().BoolVarP(&validateOnly, "validate-only", "v", false, "Send the request to the validation endpoint of Azure PIM, without requesting the activation")
 

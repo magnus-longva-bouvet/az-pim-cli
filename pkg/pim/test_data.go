@@ -250,3 +250,17 @@ var EligibleRoleAssignmentsDummyData *GraphRoleEligibilityResponse = &GraphRoleE
 		},
 	},
 }
+
+// ActiveRoleAssignmentsDummyData has Role 2 activated and Role 1 merely eligible.
+var ActiveRoleAssignmentsDummyData *GraphRoleAssignmentResponse = &GraphRoleAssignmentResponse{
+	Value: []GraphRoleAssignmentInstance{
+		{
+			Id:               "d5b1d5d3-4d8e-4f90-ab3c-3e4f5a6b7c8d",
+			PrincipalId:      TEST_DUMMY_PRINCIPAL_ID,
+			RoleDefinitionId: TEST_DUMMY_ROLE_2_DEFINITION_ID,
+			DirectoryScopeId: "/",
+			AssignmentType:   "Activated",
+			EndDateTime:      &testDummyAssignmentEnd,
+		},
+	},
+}

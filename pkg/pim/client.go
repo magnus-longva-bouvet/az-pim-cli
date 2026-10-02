@@ -30,6 +30,7 @@ type Client interface {
 	GetEligibleGroupAssignments(principalId string, token string) *GraphGroupEligibilityResponse
 	GetActiveGroupAssignments(principalId string, token string) *GraphGroupAssignmentResponse
 	GetEligibleRoleAssignments(principalId string, token string) *GraphRoleEligibilityResponse
+	GetActiveRoleAssignments(principalId string, token string) *GraphRoleAssignmentResponse
 	RequestGroupAssignment(groupAssignmentRequest *GraphGroupAssignmentRequest, token string) *GraphAssignmentScheduleRequest
 	RequestRoleAssignment(roleAssignmentRequest *GraphRoleAssignmentRequest, token string) *GraphAssignmentScheduleRequest
 }
@@ -299,6 +300,27 @@ func (c AzureClient) GetEligibleRoleAssignments(principalId string, token string
 
 func GetEligibleRoleAssignments(principalId string, token string, c Client) *GraphRoleEligibilityResponse {
 	return c.GetEligibleRoleAssignments(principalId, token)
+}
+
+// GetActiveRoleAssignments lists the principal's Entra role assignments that are
+// live right now, as opposed to the eligible ones.
+func (c AzureClient) GetActiveRoleAssignments(principalId string, token string) *GraphRoleAssignmentResponse {
+	params := map[string]string{
+		"$filter": fmt.Sprintf("principalId eq '%s'", principalId),
+	}
+	responseModel := &GraphRoleAssignmentResponse{}
+	_ = Request(&PIMRequest{
+		Url:    fmt.Sprintf("%s/%s/%s", c.GraphBaseURL, GRAPH_API_VERSION, GRAPH_ROLE_ASSIGNMENT_PATH),
+		Token:  token,
+		Method: "GET",
+		Params: params,
+	}, responseModel)
+
+	return responseModel
+}
+
+func GetActiveRoleAssignments(principalId string, token string, c Client) *GraphRoleAssignmentResponse {
+	return c.GetActiveRoleAssignments(principalId, token)
 }
 
 func (c AzureClient) ValidateResourceAssignmentRequest(scope string, resourceAssignmentRequest *ResourceAssignmentRequestRequest, token string) bool {

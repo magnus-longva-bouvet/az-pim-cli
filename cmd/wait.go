@@ -12,8 +12,8 @@ import (
 	"github.com/netr0m/az-pim-cli/pkg/readiness"
 )
 
-// Exit code for "the group is active, but this shell could not be confirmed
-// able to use it". The activation stands either way.
+// Exit code for "active, but this shell could not be confirmed able to use it".
+// The activation stands either way.
 const EXIT_NOT_READY = 4
 
 // waitInterval is the pause between two rounds of checks.
@@ -22,18 +22,13 @@ const waitInterval = 5 * time.Second
 var waitUntilUsable bool
 var waitTimeout time.Duration
 
-// --wait is wired up for groups only. Entra role activations (activate role)
-// reach tokens the same way and Azure resource roles (activate resource) are
-// enforced by ARM like a group's roles, so pkg/readiness would fit both, but
-// neither is tested, and a mistake with Entra roles lands in the directory.
+// --wait is wired up for groups and Entra roles. Azure resource roles (activate
+// resource) are enforced by ARM the way a group's roles are, so the group checks
+// would fit them, but that is neither wired up nor tested.
 
 func checkWaitFlags() {
 	if !waitUntilUsable {
 		return
-	}
-	if extend {
-		slog.Error("'--wait' has nothing to wait for with '--extend': extending does not change who is a member")
-		os.Exit(1)
 	}
 	if azureEnv != "global" {
 		slog.Error("'--wait' only knows the endpoints of the global cloud", "cloud", azureEnv)
@@ -45,15 +40,10 @@ func checkWaitFlags() {
 	}
 }
 
-// prepareWait runs before the activation is requested, and changes nothing. It
-// makes sure az in this shell is signed in as the account being activated,
-// since the checks use az's credentials and would otherwise never pass, and
-// works out what to check.
-func prepareWait(ctx context.Context, principalId string, group *pim.GraphGroupEligibilityInstance) *readiness.Waiter {
-	if !strings.EqualFold(group.AccessId, "member") {
-		slog.Error("'--wait' applies to memberships only; owners do not get a group's access", "accessId", group.AccessId)
-		os.Exit(1)
-	}
+// newWaiter makes sure az in this shell is signed in as principalId, the account
+// being activated: the checks use az's credentials and could never pass
+// otherwise. Like everything that prepares a wait, it changes nothing.
+func newWaiter(ctx context.Context, principalId string) (*readiness.Waiter, readiness.TokenSource) {
 	tokens, err := readiness.AzureCLITokens()
 	if err != nil {
 		slog.Error("'--wait' needs the Azure CLI", "error", err.Error())
@@ -79,27 +69,7 @@ func prepareWait(ctx context.Context, principalId string, group *pim.GraphGroupE
 		os.Exit(1)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	assignments, err := readiness.Discover(ctx, client, tokens, AzureClientInstance.ARMBaseURL, group.GroupId)
-	if err != nil {
-		slog.Warn("Could not list the group's Azure role assignments", "error", err.Error())
-	}
-	whoami, reason := readiness.KubectlWhoami(ctx)
-	if whoami == nil {
-		slog.Info("Not checking kubectl", "reason", reason)
-	}
-	checks := readiness.BuildChecks(group.GroupId, assignments, readiness.Options{
-		ARMBaseURL:   AzureClientInstance.ARMBaseURL,
-		GraphBaseURL: AzureClientInstance.GraphBaseURL,
-		HTTPClient:   client,
-		Whoami:       whoami,
-	})
-	for _, check := range checks {
-		slog.Info("Will check", "check", check.Name())
-	}
-
 	return &readiness.Waiter{
-		Checks: checks,
 		Tokens: tokens,
 		Refresh: func() error {
 			dropped, err := readiness.DropCachedAccessTokens(configDir)
@@ -110,15 +80,76 @@ func prepareWait(ctx context.Context, principalId string, group *pim.GraphGroupE
 		},
 		Interval: waitInterval,
 		Timeout:  waitTimeout,
+	}, tokens
+}
+
+// prepareGroupWait works out what to check for a group membership: the group's
+// Azure role assignments, its storage accounts and key vaults, and kubectl.
+func prepareGroupWait(ctx context.Context, principalId, groupId, accessId string) *readiness.Waiter {
+	if !strings.EqualFold(accessId, "member") {
+		slog.Error("'--wait' applies to memberships only; owners do not get a group's access", "accessId", accessId)
+		os.Exit(1)
+	}
+	waiter, tokens := newWaiter(ctx, principalId)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	assignments, err := readiness.Discover(ctx, client, tokens, AzureClientInstance.ARMBaseURL, groupId)
+	if err != nil {
+		slog.Warn("Could not list the group's Azure role assignments", "error", err.Error())
+	}
+	whoami, reason := readiness.KubectlWhoami(ctx)
+	if whoami == nil {
+		slog.Info("Not checking kubectl", "reason", reason)
+	}
+	waiter.Checks = readiness.BuildChecks(groupId, assignments, readiness.Options{
+		ARMBaseURL:   AzureClientInstance.ARMBaseURL,
+		GraphBaseURL: AzureClientInstance.GraphBaseURL,
+		HTTPClient:   client,
+		Whoami:       whoami,
+	})
+	logChecks(waiter.Checks)
+	return waiter
+}
+
+// prepareRoleWait works out what to check for an Entra role: that az's Microsoft
+// Graph token carries it. Tokens list only built-in roles held tenant-wide, so
+// for any other role the wait can do no more than refresh the tokens.
+func prepareRoleWait(ctx context.Context, principalId string, role *pim.GraphRoleEligibilityInstance, roleName string) *readiness.Waiter {
+	waiter, _ := newWaiter(ctx, principalId)
+
+	templateId, builtIn := role.RoleDefinitionId, true
+	if role.RoleDefinition != nil {
+		if role.RoleDefinition.TemplateId != "" {
+			templateId = role.RoleDefinition.TemplateId
+		}
+		builtIn = role.RoleDefinition.IsBuiltIn
+	}
+	switch {
+	case !builtIn:
+		slog.Warn("Tokens do not list custom roles; '--wait' only refreshes this shell's tokens", "role", roleName)
+	case directoryScope(role.DirectoryScopeId) != pim.GRAPH_DEFAULT_DIRECTORY_SCOPE:
+		slog.Warn("Tokens do not list roles scoped to an administrative unit; '--wait' only refreshes this shell's tokens", "role", roleName, "directoryScope", role.DirectoryScopeId)
+	default:
+		waiter.Checks = []readiness.Check{readiness.DirectoryRoleCheck(templateId, roleName)}
+	}
+	logChecks(waiter.Checks)
+	return waiter
+}
+
+func logChecks(checks []readiness.Check) {
+	for _, check := range checks {
+		slog.Info("Will check", "check", check.Name())
 	}
 }
 
-func runWait(ctx context.Context, waiter *readiness.Waiter, groupName string) {
+// runWait waits, and exits with EXIT_NOT_READY when the wait fails. kind
+// ("group" or "role") and name say what was activated.
+func runWait(ctx context.Context, waiter *readiness.Waiter, kind, name string) {
 	report, err := waiter.Wait(ctx)
 	if err != nil {
 		slog.Error(
-			"Could not confirm that this shell can use the group",
-			"group", groupName,
+			"Could not confirm that this shell can use the "+kind,
+			kind, name,
 			"error", err.Error(),
 			"pending", strings.Join(report.Pending, "; "),
 			"hint", "the activation stands; run 'az login' for new tokens, then rerun with '--wait' to check again",
@@ -128,18 +159,43 @@ func runWait(ctx context.Context, waiter *readiness.Waiter, groupName string) {
 	for _, unverified := range report.Unverified {
 		slog.Warn("Could not verify", "check", unverified.Name, "reason", unverified.Detail)
 	}
-	slog.Info("This shell can use the group", "group", groupName, "elapsed", report.Elapsed.Round(time.Second).String())
+	if len(waiter.Checks) == 0 {
+		slog.Info("Refreshed this shell's tokens; nothing could be checked", kind, name)
+		return
+	}
+	slog.Info("This shell can use the "+kind, kind, name, "elapsed", report.Elapsed.Round(time.Second).String())
 }
 
-// activeMembership returns the group's live assignment with the eligible
-// assignment's access type, or nil when there is none.
-func activeMembership(principalId string, token string, group *pim.GraphGroupEligibilityInstance) *pim.GraphGroupAssignmentInstance {
+// activeMembership returns the group's live assignment with the given access
+// type, or nil when there is none.
+func activeMembership(principalId, token, groupId, accessId string) *pim.GraphGroupAssignmentInstance {
 	active := pim.GetActiveGroupAssignments(principalId, token, AzureClientInstance)
 	for i := range active.Value {
 		instance := &active.Value[i]
-		if strings.EqualFold(instance.GroupId, group.GroupId) && strings.EqualFold(instance.AccessId, group.AccessId) {
+		if strings.EqualFold(instance.GroupId, groupId) && strings.EqualFold(instance.AccessId, accessId) {
 			return instance
 		}
 	}
 	return nil
+}
+
+// activeRoleAssignment returns the role's live assignment at the eligible
+// assignment's directory scope, or nil when there is none.
+func activeRoleAssignment(principalId, token string, role *pim.GraphRoleEligibilityInstance) *pim.GraphRoleAssignmentInstance {
+	active := pim.GetActiveRoleAssignments(principalId, token, AzureClientInstance)
+	for i := range active.Value {
+		instance := &active.Value[i]
+		if strings.EqualFold(instance.RoleDefinitionId, role.RoleDefinitionId) &&
+			directoryScope(instance.DirectoryScopeId) == directoryScope(role.DirectoryScopeId) {
+			return instance
+		}
+	}
+	return nil
+}
+
+func directoryScope(scope string) string {
+	if scope == "" {
+		return pim.GRAPH_DEFAULT_DIRECTORY_SCOPE
+	}
+	return scope
 }

@@ -1,6 +1,6 @@
-// Package readiness waits until this shell can use a PIM group that was just
-// activated, by asking the services the group grants access to whether they
-// accept this shell's own Azure CLI credentials.
+// Package readiness waits until this shell can use a PIM group or Entra role
+// that was just activated, by asking the services it grants access to whether
+// they accept this shell's own Azure CLI credentials.
 //
 // The activation itself takes effect within seconds, but the access tokens az
 // already has cached were issued before it and are not updated, so az, and
@@ -9,8 +9,8 @@
 // refresh token on the next call) and repeats a round of read-only checks until
 // every check passes.
 //
-// Only PIM for Groups is wired up. Entra role activations reach tokens the same
-// way and would fit, but are not tested here.
+// It serves PIM for Groups and PIM for Entra roles. Azure resource roles
+// (activate resource) are not wired up.
 package readiness
 
 import (
@@ -96,7 +96,8 @@ const checkTimeout = 30 * time.Second
 // Wait returns once every check has passed readyRounds rounds in a row. A
 // check that has only ever answered Unknown does not hold the wait up; it is
 // reported as unverified instead. A check that has answered, and then turns
-// Unknown, does hold it up.
+// Unknown, does hold it up. With no checks at all it refreshes once and
+// returns, since new tokens are all it can offer then.
 func (w *Waiter) Wait(ctx context.Context) (Report, error) {
 	now, sleep := w.now, w.sleep
 	if now == nil {
@@ -107,6 +108,12 @@ func (w *Waiter) Wait(ctx context.Context) (Report, error) {
 	}
 
 	start := now()
+	if len(w.Checks) == 0 {
+		if err := w.Refresh(); err != nil {
+			return Report{}, fmt.Errorf("refreshing this shell's Azure CLI tokens: %w", err)
+		}
+		return Report{Elapsed: now().Sub(start)}, nil
+	}
 	answered := make([]bool, len(w.Checks))
 	var last []Result
 	passedInRow := 0
@@ -159,7 +166,7 @@ func (w *Waiter) Wait(ctx context.Context) (Report, error) {
 		if len(pending) == 0 {
 			slog.Info("Every check passes; confirming", "elapsed", elapsed.Round(time.Second).String())
 		} else {
-			slog.Info("Waiting until this shell can use the group", "pending", len(pending), "elapsed", elapsed.Round(time.Second).String())
+			slog.Info("Waiting until this shell's credentials pass every check", "pending", len(pending), "elapsed", elapsed.Round(time.Second).String())
 			for _, name := range pending {
 				slog.Debug("Not passing yet", "check", name)
 			}

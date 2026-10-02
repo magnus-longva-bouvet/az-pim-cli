@@ -210,6 +210,8 @@ type GraphGroupAssignmentResponse struct {
 type GraphRoleDefinition struct {
 	Id          string `json:"id"`
 	DisplayName string `json:"displayName"`
+	TemplateId  string `json:"templateId"` // what tokens list a built-in role by (the wids claim)
+	IsBuiltIn   bool   `json:"isBuiltIn"`
 }
 
 // GraphRoleEligibilityInstance is an eligible PIM-for-Entra-roles assignment.
@@ -223,6 +225,21 @@ type GraphRoleEligibilityInstance struct {
 
 type GraphRoleEligibilityResponse struct {
 	Value []GraphRoleEligibilityInstance `json:"value"`
+}
+
+// GraphRoleAssignmentInstance is an *active* PIM-for-Entra-roles assignment: one
+// that has been activated, or one assigned outright.
+type GraphRoleAssignmentInstance struct {
+	Id               string  `json:"id"`
+	PrincipalId      string  `json:"principalId"`
+	RoleDefinitionId string  `json:"roleDefinitionId"`
+	DirectoryScopeId string  `json:"directoryScopeId"`
+	AssignmentType   string  `json:"assignmentType"` // "Activated" | "Assigned"
+	EndDateTime      *string `json:"endDateTime"`    // nil => permanent
+}
+
+type GraphRoleAssignmentResponse struct {
+	Value []GraphRoleAssignmentInstance `json:"value"`
 }
 
 // GraphGroupAssignmentRequest is the body of a PIM-for-Groups selfActivate or
