@@ -28,6 +28,7 @@ type Client interface {
 	ValidateResourceAssignmentRequest(scope string, resourceAssignmentRequest *ResourceAssignmentRequestRequest, token string) bool
 	RequestResourceAssignment(scope string, resourceAssignmentRequest *ResourceAssignmentRequestRequest, token string) *ResourceAssignmentRequestResponse
 	GetEligibleGroupAssignments(principalId string, token string) *GraphGroupEligibilityResponse
+	GetActiveGroupAssignments(principalId string, token string) *GraphGroupAssignmentResponse
 	GetEligibleRoleAssignments(principalId string, token string) *GraphRoleEligibilityResponse
 	RequestGroupAssignment(groupAssignmentRequest *GraphGroupAssignmentRequest, token string) *GraphAssignmentScheduleRequest
 	RequestRoleAssignment(roleAssignmentRequest *GraphRoleAssignmentRequest, token string) *GraphAssignmentScheduleRequest
@@ -255,6 +256,29 @@ func (c AzureClient) GetEligibleGroupAssignments(principalId string, token strin
 
 func GetEligibleGroupAssignments(principalId string, token string, c Client) *GraphGroupEligibilityResponse {
 	return c.GetEligibleGroupAssignments(principalId, token)
+}
+
+// GetActiveGroupAssignments lists the PIM-for-Groups assignments that are live for
+// the principal right now. Graph will not tell you why a selfExtend was refused, so
+// the caller reads the current window from here first and decides up front.
+func (c AzureClient) GetActiveGroupAssignments(principalId string, token string) *GraphGroupAssignmentResponse {
+	params := map[string]string{
+		"$filter": fmt.Sprintf("principalId eq '%s'", principalId),
+		"$expand": "group",
+	}
+	responseModel := &GraphGroupAssignmentResponse{}
+	_ = Request(&PIMRequest{
+		Url:    fmt.Sprintf("%s/%s/%s", c.GraphBaseURL, GRAPH_API_VERSION, GRAPH_GROUP_ASSIGNMENT_PATH),
+		Token:  token,
+		Method: "GET",
+		Params: params,
+	}, responseModel)
+
+	return responseModel
+}
+
+func GetActiveGroupAssignments(principalId string, token string, c Client) *GraphGroupAssignmentResponse {
+	return c.GetActiveGroupAssignments(principalId, token)
 }
 
 func (c AzureClient) GetEligibleRoleAssignments(principalId string, token string) *GraphRoleEligibilityResponse {

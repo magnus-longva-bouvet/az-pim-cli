@@ -86,6 +86,37 @@ func (m *mockClient) GetEligibleGroupAssignments(principalId string, token strin
 	return args.Get(0).(*GraphGroupEligibilityResponse)
 }
 
+func (m *mockClient) GetActiveGroupAssignments(principalId string, token string) *GraphGroupAssignmentResponse {
+	args := m.Called(principalId, token)
+	return args.Get(0).(*GraphGroupAssignmentResponse)
+}
+
+func TestGetActiveGroupAssignments(t *testing.T) {
+	m := newMockClient()
+
+	m.On("GetActiveGroupAssignments", TEST_DUMMY_PRINCIPAL_ID, TEST_DUMMY_JWT).Return(ActiveGroupAssignmentsDummyData)
+
+	activeGroupAssignments := GetActiveGroupAssignments(TEST_DUMMY_PRINCIPAL_ID, TEST_DUMMY_JWT, m)
+
+	if len(activeGroupAssignments.Value) != 2 {
+		t.Errorf("expected 2 active group assignments, got %v", len(activeGroupAssignments.Value))
+	}
+	for _, groupAssignment := range activeGroupAssignments.Value {
+		if groupAssignment.PrincipalId != TEST_DUMMY_PRINCIPAL_ID {
+			t.Errorf("expected principalId to be %s, got %s", TEST_DUMMY_PRINCIPAL_ID, groupAssignment.PrincipalId)
+		}
+	}
+
+	// A permanent assignment reports no end date, which is what tells an extend
+	// there is nothing to push out.
+	if activeGroupAssignments.Value[0].EndDateTime == nil {
+		t.Error("expected the activated assignment to carry an end date")
+	}
+	if activeGroupAssignments.Value[1].EndDateTime != nil {
+		t.Errorf("expected the permanent assignment to have no end date, got %s", *activeGroupAssignments.Value[1].EndDateTime)
+	}
+}
+
 func TestGetEligibleGroupAssignments(t *testing.T) {
 	m := newMockClient()
 

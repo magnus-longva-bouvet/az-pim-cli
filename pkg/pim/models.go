@@ -186,6 +186,26 @@ type GraphGroupEligibilityResponse struct {
 	Value []GraphGroupEligibilityInstance `json:"value"`
 }
 
+// GraphGroupAssignmentInstance is an *active* PIM-for-Groups membership/ownership,
+// i.e. one that has already been activated, as opposed to one you are merely
+// eligible for. EndDateTime is nil for a permanent assignment, which is exactly
+// the case an extension must not touch.
+type GraphGroupAssignmentInstance struct {
+	Id             string      `json:"id"`
+	PrincipalId    string      `json:"principalId"`
+	GroupId        string      `json:"groupId"`
+	AccessId       string      `json:"accessId"`       // "member" | "owner"
+	AssignmentType string      `json:"assignmentType"` // "activated" | "assigned"
+	MemberType     string      `json:"memberType"`
+	StartDateTime  *string     `json:"startDateTime"`
+	EndDateTime    *string     `json:"endDateTime"` // nil => permanent
+	Group          *GraphGroup `json:"group"`       // populated via $expand=group
+}
+
+type GraphGroupAssignmentResponse struct {
+	Value []GraphGroupAssignmentInstance `json:"value"`
+}
+
 // GraphRoleDefinition is the expanded role definition on a role eligibility instance.
 type GraphRoleDefinition struct {
 	Id          string `json:"id"`
@@ -205,9 +225,12 @@ type GraphRoleEligibilityResponse struct {
 	Value []GraphRoleEligibilityInstance `json:"value"`
 }
 
-// GraphGroupAssignmentRequest is the body of a PIM-for-Groups selfActivate request.
+// GraphGroupAssignmentRequest is the body of a PIM-for-Groups selfActivate or
+// selfExtend request. The two differ only in Action: selfExtend replaces the
+// schedule of an assignment that is already live, and is rejected if there is
+// no such assignment.
 type GraphGroupAssignmentRequest struct {
-	Action        string             `json:"action"` // "selfActivate"
+	Action        string             `json:"action"` // "selfActivate" | "selfExtend"
 	AccessId      string             `json:"accessId"`
 	PrincipalId   string             `json:"principalId"`
 	GroupId       string             `json:"groupId"`

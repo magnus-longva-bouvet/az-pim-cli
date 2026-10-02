@@ -144,6 +144,40 @@ func GetEligibleGroupAssignment(name string, prefix string, role string, eligibl
 	return nil
 }
 
+// FindActiveGroupAssignment picks the live assignment matching name/prefix/role,
+// mirroring GetEligibleGroupAssignment's matching. Unlike that function it returns
+// nil instead of exiting: "you are not currently active in this group" is an
+// ordinary answer for an extend request, not a failure, and the caller reports it
+// with its own exit code.
+func FindActiveGroupAssignment(name string, prefix string, role string, activeGroupAssignments *pim.GraphGroupAssignmentResponse) *pim.GraphGroupAssignmentInstance {
+	name = strings.ToLower(name)
+	prefix = strings.ToLower(prefix)
+	role = strings.ToLower(role)
+	for i := range activeGroupAssignments.Value {
+		instance := &activeGroupAssignments.Value[i]
+		groupName := ""
+		if instance.Group != nil {
+			groupName = strings.ToLower(instance.Group.DisplayName)
+		}
+
+		var matched bool
+		if len(prefix) != 0 {
+			matched = strings.HasPrefix(groupName, prefix)
+		} else if len(name) != 0 {
+			matched = groupName == name
+		}
+
+		if matched {
+			// For groups, the "role" is the access type (member/owner)
+			if role == "" || strings.ToLower(instance.AccessId) == role {
+				return instance
+			}
+		}
+	}
+
+	return nil
+}
+
 func GetEligibleRoleAssignment(name string, prefix string, role string, eligibleRoleAssignments *pim.GraphRoleEligibilityResponse) *pim.GraphRoleEligibilityInstance {
 	name = strings.ToLower(name)
 	prefix = strings.ToLower(prefix)

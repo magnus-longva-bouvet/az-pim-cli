@@ -48,6 +48,10 @@ const (
 	// PIM for Groups
 	GRAPH_GROUP_ELIGIBILITY_PATH = "identityGovernance/privilegedAccess/group/eligibilityScheduleInstances"
 	GRAPH_GROUP_REQUEST_PATH     = "identityGovernance/privilegedAccess/group/assignmentScheduleRequests"
+	// Assignments that are live right now, as opposed to the eligibility above.
+	// Extending needs this one: the current end time is what decides whether an
+	// extension would actually lengthen the window or quietly cut it short.
+	GRAPH_GROUP_ASSIGNMENT_PATH = "identityGovernance/privilegedAccess/group/assignmentScheduleInstances"
 	// PIM for Entra (directory) roles
 	GRAPH_ROLE_ELIGIBILITY_PATH = "roleManagement/directory/roleEligibilityScheduleInstances"
 	GRAPH_ROLE_REQUEST_PATH     = "roleManagement/directory/roleAssignmentScheduleRequests"
@@ -56,6 +60,7 @@ const (
 // Microsoft Graph PIM request action and expiration type
 const (
 	GRAPH_ACTION_SELF_ACTIVATE      = "selfActivate"
+	GRAPH_ACTION_SELF_EXTEND        = "selfExtend"
 	GRAPH_EXPIRATION_AFTER_DURATION = "afterDuration"
 )
 

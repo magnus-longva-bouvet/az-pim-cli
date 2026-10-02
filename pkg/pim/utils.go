@@ -246,6 +246,24 @@ func CreateGraphGroupAssignmentRequest(principalId string, instance *GraphGroupE
 	}
 }
 
+// CreateGraphGroupExtendRequest builds a selfExtend request for an assignment that
+// is already live. The schedule is "afterDuration from now" rather than an absolute
+// end time: Graph applies the new window when it processes the request, so an
+// absolute end computed here would drift by the round-trip. Callers that care about
+// not shortening the window must compare against the instance's EndDateTime first --
+// selfExtend will happily make an assignment shorter.
+func CreateGraphGroupExtendRequest(principalId string, instance *GraphGroupAssignmentInstance, duration int, reason string, ticketSystem string, ticketNumber string) *GraphGroupAssignmentRequest {
+	return &GraphGroupAssignmentRequest{
+		Action:        GRAPH_ACTION_SELF_EXTEND,
+		AccessId:      instance.AccessId,
+		PrincipalId:   principalId,
+		GroupId:       instance.GroupId,
+		Justification: reason,
+		ScheduleInfo:  CreateGraphScheduleInfo(duration, "", ""),
+		TicketInfo:    &GraphTicketInfo{TicketNumber: ticketNumber, TicketSystem: ticketSystem},
+	}
+}
+
 func CreateGraphRoleAssignmentRequest(principalId string, instance *GraphRoleEligibilityInstance, duration int, startDate string, startTime string, reason string, ticketSystem string, ticketNumber string) *GraphRoleAssignmentRequest {
 	directoryScopeId := instance.DirectoryScopeId
 	if directoryScopeId == "" {

@@ -150,6 +150,47 @@ const (
 	TEST_DUMMY_ROLE_2_DEFINITION_ID = "fe930be7-5e62-47db-91af-98c3a49a38b1"
 )
 
+// ActiveGroupAssignmentsDummyData covers the two shapes an extend has to tell
+// apart: a time-boxed activation (Group 1, extendable) and a permanent assignment
+// with no end date (Group 2, nothing to extend).
+var ActiveGroupAssignmentsDummyData *GraphGroupAssignmentResponse = &GraphGroupAssignmentResponse{
+	Value: []GraphGroupAssignmentInstance{
+		{
+			Id:             "b3f0a05a-6a4e-4b0e-9d0e-3f6f5c5f4d21",
+			PrincipalId:    TEST_DUMMY_PRINCIPAL_ID,
+			GroupId:        TEST_DUMMY_GROUP_1_ID,
+			AccessId:       "member",
+			AssignmentType: "activated",
+			MemberType:     "direct",
+			StartDateTime:  &testDummyAssignmentStart,
+			EndDateTime:    &testDummyAssignmentEnd,
+			Group: &GraphGroup{
+				Id:          TEST_DUMMY_GROUP_1_ID,
+				DisplayName: TEST_DUMMY_GROUP_1_NAME,
+			},
+		},
+		{
+			Id:             "c7d1b16b-7b5f-4c1f-8e1f-4a7a6d6a5e32",
+			PrincipalId:    TEST_DUMMY_PRINCIPAL_ID,
+			GroupId:        TEST_DUMMY_GROUP_2_ID,
+			AccessId:       "member",
+			AssignmentType: "assigned",
+			MemberType:     "direct",
+			StartDateTime:  &testDummyAssignmentStart,
+			EndDateTime:    nil,
+			Group: &GraphGroup{
+				Id:          TEST_DUMMY_GROUP_2_ID,
+				DisplayName: TEST_DUMMY_GROUP_2_NAME,
+			},
+		},
+	},
+}
+
+var (
+	testDummyAssignmentStart = "2026-01-01T08:00:00Z"
+	testDummyAssignmentEnd   = "2026-01-01T16:00:00Z"
+)
+
 var EligibleGroupAssignmentsDummyData *GraphGroupEligibilityResponse = &GraphGroupEligibilityResponse{
 	Value: []GraphGroupEligibilityInstance{
 		{

@@ -51,6 +51,23 @@ func TestGetEligibleGroupAssignment(t *testing.T) {
 	assert.EqualValues(t, grpprefix, &pim.EligibleGroupAssignmentsDummyData.Value[0], "resulting group assignment does not match expected assignment")
 }
 
+func TestFindActiveGroupAssignment(t *testing.T) {
+	var grp1 = FindActiveGroupAssignment(pim.TEST_DUMMY_GROUP_1_NAME, "", "member", pim.ActiveGroupAssignmentsDummyData)
+	assert.EqualValues(t, grp1, &pim.ActiveGroupAssignmentsDummyData.Value[0], "resulting group assignment does not match expected assignment")
+	assert.NotNil(t, grp1.EndDateTime, "an activated assignment should carry an end date")
+
+	var grp2 = FindActiveGroupAssignment(pim.TEST_DUMMY_GROUP_2_NAME, "", "", pim.ActiveGroupAssignmentsDummyData)
+	assert.EqualValues(t, grp2, &pim.ActiveGroupAssignmentsDummyData.Value[1], "resulting group assignment does not match expected assignment")
+
+	var grpprefix = FindActiveGroupAssignment("", "group", "", pim.ActiveGroupAssignmentsDummyData)
+	assert.EqualValues(t, grpprefix, &pim.ActiveGroupAssignmentsDummyData.Value[0], "resulting group assignment does not match expected assignment")
+
+	// The whole point of this selector over GetEligibleGroupAssignment: a miss is a
+	// nil return the caller can act on, not an os.Exit(1).
+	assert.Nil(t, FindActiveGroupAssignment("no such group", "", "", pim.ActiveGroupAssignmentsDummyData), "expected nil for a group with no active assignment")
+	assert.Nil(t, FindActiveGroupAssignment(pim.TEST_DUMMY_GROUP_2_NAME, "", "owner", pim.ActiveGroupAssignmentsDummyData), "expected nil when the access type does not match")
+}
+
 func TestGetEligibleRoleAssignment(t *testing.T) {
 	var role1 = GetEligibleRoleAssignment(pim.TEST_DUMMY_ROLE_1_NAME, "", "", pim.EligibleRoleAssignmentsDummyData)
 	assert.EqualValues(t, role1, &pim.EligibleRoleAssignmentsDummyData.Value[0], "resulting role assignment does not match expected assignment")
