@@ -220,6 +220,29 @@ time=2024-11-20T08:08:20.129+01:00 level=INFO msg="Request completed" group=my-e
 
 </details>
 
+#### Wait until a group works
+> Return only once this shell can use the activated group
+
+```bash
+$ az-pim-cli activate group --name my-entra-id-group --wait
+```
+
+<details>
+<summary>Details</summary>
+
+An activation takes effect within seconds, but the access tokens the Azure CLI has already cached were issued before it, and services keep refusing them until they expire. The same goes for kubectl when its context signs in through `kubelogin --login azurecli`. With `--wait`, az-pim-cli drops those cached access tokens after the activation (the refresh token stays, so `az` mints new ones without a sign-in), then checks this shell's own credentials against what the group grants:
+
+- each Azure role assignment of the group, through the permissions Azure Resource Manager reports for the token;
+- storage accounts and key vaults where a role may delete containers, keys or certificates, with a DELETE of a random name that cannot exist (and a random lease id for containers). Secrets are never addressed;
+- the group's object id in `kubectl auth whoami`, when the current kube context signs in through az;
+- the group membership in Microsoft Graph, when none of the above applies.
+
+It returns once every check has passed twice in a row, and exits with code 4 when that has not happened within `--wait-timeout` (default `3m`). A check that never gets an answer, typically because of a firewall, is reported rather than waited for. A group that is already active is only checked, not requested again.
+
+`--wait` works for groups only, needs `az` signed in as the same account as az-pim-cli, uses the endpoints of the global cloud, and has been tested on Linux only.
+
+</details>
+
 #### Entra roles
 > Activate [entra roles](https://portal.azure.com/#view/Microsoft_Azure_PIMCommon/ActivationMenuBlade/~/aadmigratedroles)
 

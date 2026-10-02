@@ -4,12 +4,14 @@ Copyright © 2023 netr0m <netr0m@pm.me>
 package cmd
 
 import (
+	"context"
 	"os"
 	"time"
 
 	"log/slog"
 
 	"github.com/netr0m/az-pim-cli/pkg/pim"
+	"github.com/netr0m/az-pim-cli/pkg/readiness"
 	"github.com/netr0m/az-pim-cli/pkg/utils"
 	"github.com/spf13/cobra"
 )
@@ -212,6 +214,24 @@ func activateGovernanceRole(roleType string) {
 		if groupAssignment.Group != nil {
 			groupName = groupAssignment.Group.DisplayName
 		}
+
+		ctx := context.Background()
+		var waiter *readiness.Waiter
+		if waitUntilUsable {
+			waiter = prepareWait(ctx, principalId, groupAssignment)
+			// Active from an earlier activation, maybe in another shell: requesting
+			// again would only be refused, but this shell's tokens may still predate it.
+			if active := activeMembership(principalId, token, groupAssignment); active != nil {
+				slog.Info("Already active; checking that this shell can use it", "group", groupName, "accessId", active.AccessId)
+				if dryRun {
+					slog.Warn("Skipping the wait due to '--dry-run'")
+					os.Exit(0)
+				}
+				runWait(ctx, waiter, groupName)
+				return
+			}
+		}
+
 		slog.Info(
 			"Requesting activation",
 			"group", groupName,
@@ -235,6 +255,9 @@ func activateGovernanceRole(roleType string) {
 			"accessId", groupAssignment.AccessId,
 			"status", requestResponse.Status,
 		)
+		if waiter != nil {
+			runWait(ctx, waiter, groupName)
+		}
 	case pim.ROLE_TYPE_ENTRA_ROLES:
 		eligibleAssignments := pim.GetEligibleRoleAssignments(principalId, token, AzureClientInstance)
 		roleAssignment := utils.GetEligibleRoleAssignment(name, prefix, roleName, eligibleAssignments)
@@ -273,6 +296,7 @@ var activateGroupCmd = &cobra.Command{
 	Aliases: []string{"g", "grp", "groups"},
 	Short:   "Sends a request to Azure PIM to activate the given group",
 	Run: func(cmd *cobra.Command, args []string) {
+		checkWaitFlags()
 		activateGovernanceRole(pim.ROLE_TYPE_AAD_GROUPS)
 	},
 }
@@ -303,6 +327,8 @@ func init() {
 	activateCmd.PersistentFlags().StringVar(&ticketSystem, "ticket-system", "", "Ticket system for the activation")
 	activateCmd.PersistentFlags().StringVarP(&ticketNumber, "ticket-number", "T", "", "Ticket number for the activation")
 	activateGroupCmd.PersistentFlags().BoolVar(&extend, "extend", false, "Extend an already-active group assignment to 'now + --duration' instead of activating. Never shortens: if more time than that is already left, nothing is requested. Exits 3 if the group is not currently active.")
+	activateGroupCmd.Flags().BoolVar(&waitUntilUsable, "wait", false, "After activating, wait until this shell can use the group: drop the Azure CLI's cached access tokens so az mints new ones, then check the group's role assignments with them, and kubectl when its context signs in through az. A group that is already active is only checked. Exits 4 if this is not confirmed within --wait-timeout. Groups only; needs az signed in as the same account.")
+	activateGroupCmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 3*time.Minute, "How long '--wait' keeps checking before it gives up")
 	activateCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Display the resource that would be activated, without requesting the activation")
 	activateCmd.PersistentFlags().BoolVarP(&validateOnly, "validate-only", "v", false, "Send the request to the validation endpoint of Azure PIM, without requesting the activation")
 
